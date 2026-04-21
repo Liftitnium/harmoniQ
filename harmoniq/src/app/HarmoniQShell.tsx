@@ -8,8 +8,20 @@ import { ToastViewport } from "@/components/harmoniq/toast/ToastViewport";
 import { ToastProvider } from "@/components/harmoniq/toast/ToastProvider";
 import { TopBar } from "@/components/harmoniq/TopBar";
 
+const AUTH_ROUTES = ["/login", "/signup", "/auth/callback", "/onboarding"];
+
 export function HarmoniQShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const isAuthPage = AUTH_ROUTES.some((r) => pathname.startsWith(r));
+
+  if (isAuthPage) {
+    return (
+      <ToastProvider>
+        {children}
+        <ToastViewport />
+      </ToastProvider>
+    );
+  }
 
   return (
     <ToastProvider>
@@ -38,4 +50,3 @@ export function HarmoniQShell({ children }: { children: React.ReactNode }) {
     </ToastProvider>
   );
 }
-

@@ -166,11 +166,11 @@ export default function SheetMusicPage() {
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
+          <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl">
             Sheet Music Library
           </h1>
-          <p className="mt-2 text-sm font-semibold text-slate-600">
-            Browse pieces by instrument and difficulty.
+          <p className="mt-2 text-sm font-semibold text-slate-600 dark:text-slate-400">
+            Extra pieces for self-directed practice outside your roadmap.
           </p>
         </div>
 

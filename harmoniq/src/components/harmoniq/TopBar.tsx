@@ -2,12 +2,15 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Bell, ChevronDown, LogOut, Settings, User } from "lucide-react";
 import { Logo } from "./Logo";
 import { useToast } from "./toast/ToastProvider";
 import { useNotificationsBadge } from "@/context/NotificationsBadgeContext";
+import { createClient } from "@/lib/supabase/client";
 
 export function TopBar() {
+  const router = useRouter();
   const { addToast } = useToast();
   const { unreadCount } = useNotificationsBadge();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -22,6 +25,15 @@ export function TopBar() {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+
+  async function handleSignOut() {
+    setMenuOpen(false);
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+    addToast({ kind: "info", title: "Signed out", message: "See you next time!" });
+  }
 
   return (
     <header className="sticky top-0 z-30 -mx-4 mb-4 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
@@ -88,14 +100,7 @@ export function TopBar() {
                   type="button"
                   role="menuitem"
                   className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-bold text-slate-800 transition hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    addToast({
-                      kind: "info",
-                      title: "Logged out",
-                      message: "Prototype only — no session to clear.",
-                    });
-                  }}
+                  onClick={handleSignOut}
                 >
                   <LogOut className="h-4 w-4 text-slate-500 dark:text-slate-400" />
                   Log Out
