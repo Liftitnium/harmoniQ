@@ -9,10 +9,12 @@ import {
   Loader2,
   Map,
   Music2,
+  Shield,
   Sparkles,
   Zap,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { xpProgress } from "@/lib/xp";
 import type { DailyTask, RoadmapPlan, RoadmapWeek } from "@/lib/roadmap-schema";
 
 const TODAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
@@ -24,17 +26,24 @@ const TYPE_ICON: Record<string, typeof Zap> = {
   technique: Zap,
   song: Music2,
   theory: Sparkles,
-  ear: Sparkles,
+  ear_training: Sparkles,
 };
+
+interface ProfileData {
+  xp: number;
+  streak_days: number;
+  current_level: number;
+  freeze_count: number;
+}
 
 export default function Home() {
   const [loading, setLoading] = useState(true);
   const [currentWeek, setCurrentWeek] = useState<RoadmapWeek | null>(null);
   const [plan, setPlan] = useState<RoadmapPlan | null>(null);
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
-  const [totalCompleted, setTotalCompleted] = useState(0);
   const [weeklyMinutesDone, setWeeklyMinutesDone] = useState(0);
   const [weeklyMinutesTarget, setWeeklyMinutesTarget] = useState(0);
+  const [profile, setProfile] = useState<ProfileData | null>(null);
 
   const fetchData = useCallback(async () => {
     const supabase = createClient();
@@ -45,6 +54,15 @@ export default function Home() {
       setLoading(false);
       return;
     }
+
+    // Fetch profile data
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("xp, streak_days, current_level, freeze_count")
+      .eq("id", user.id)
+      .single();
+
+    if (prof) setProfile(prof as ProfileData);
 
     const { data: rm } = await supabase
       .from("roadmaps")
@@ -71,7 +89,6 @@ export default function Home() {
 
       const ids = new Set((prog ?? []).filter((p) => p.completed).map((p) => p.task_id));
       setCompletedIds(ids);
-      setTotalCompleted(ids.size);
 
       if (cw) {
         const done = cw.daily_tasks
@@ -89,16 +106,20 @@ export default function Home() {
 
   const todayTasks: DailyTask[] = useMemo(
     () => currentWeek?.daily_tasks.filter((t) => t.day === TODAY_SHORT) ?? [],
-    [currentWeek]
+    [currentWeek],
   );
 
   const todayDone = todayTasks.filter((t) => completedIds.has(t.id)).length;
   const todayTotal = todayTasks.length;
-  const xp = totalCompleted * 10;
-  const streakEstimate = Math.min(totalCompleted, 30);
+
+  const xp = profile?.xp ?? 0;
+  const streakDays = profile?.streak_days ?? 0;
+  const freezes = profile?.freeze_count ?? 0;
+  const prog = xpProgress(xp);
+
   const weeksCompleted = plan
     ? plan.weeks.filter(
-        (w) => w.week_number < (currentWeek?.week_number ?? 1)
+        (w) => w.week_number < (currentWeek?.week_number ?? 1),
       ).length
     : 0;
 
@@ -202,25 +223,66 @@ export default function Home() {
         </div>
       </section>
 
+      {/* === XP PROGRESS BAR === */}
+      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 text-sm font-black text-white shadow">
+              {prog.level}
+            </div>
+            <div>
+              <p className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+                Level {prog.level}
+              </p>
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                {xp}{prog.nextThreshold ? ` / ${prog.nextThreshold}` : ""} XP
+              </p>
+            </div>
+          </div>
+          <Sparkles className="h-5 w-5 text-amber-500" />
+        </div>
+        {prog.nextThreshold && (
+          <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+            <div
+              className="h-2.5 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 transition-[width] duration-700"
+              style={{ width: `${Math.round(prog.progressFraction * 100)}%` }}
+            />
+          </div>
+        )}
+      </section>
+
       {/* === STATS ROW === */}
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <Flame className="h-5 w-5 text-teal-700 dark:text-teal-400" />
+          <div className="flex items-center justify-between">
+            <Flame className="h-5 w-5 text-orange-500" />
+            {freezes > 0 && (
+              <span className="flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-400">
+                <Shield className="h-2.5 w-2.5" />
+                {freezes} freeze{freezes !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
           <p className="mt-3 text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
             Streak
           </p>
           <p className="mt-1 text-2xl font-black text-slate-900 dark:text-slate-100">
-            {streakEstimate} days
+            {streakDays} <span className="text-sm font-bold text-slate-500">day{streakDays !== 1 ? "s" : ""}</span>
           </p>
+          {streakDays >= 7 && (
+            <p className="mt-1 text-[11px] font-bold text-orange-500">
+              🔥 {streakDays >= 30 ? "2x" : "1.5x"} XP bonus active
+            </p>
+          )}
         </div>
 
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <Sparkles className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
           <p className="mt-3 text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-            XP earned
+            Total XP
           </p>
           <p className="mt-1 text-2xl font-black text-slate-900 dark:text-slate-100">
-            {xp} <span className="text-sm font-bold text-slate-500">XP</span>
+            {xp.toLocaleString()} <span className="text-sm font-bold text-slate-500">XP</span>
           </p>
         </div>
 

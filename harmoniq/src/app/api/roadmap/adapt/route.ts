@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getGemini, GEMINI_MODEL } from "@/lib/gemini/client";
+import { getGemini, GEMINI_MODEL, GENERATION_CONFIG } from "@/lib/gemini/client";
 import {
   extractJson,
-  validatePlan,
+  validatePlanLenient,
   type RoadmapPlan,
 } from "@/lib/roadmap-schema";
 
@@ -19,14 +19,16 @@ export async function POST(request: Request) {
   }
 
   /* ---- parse body ---- */
-  let weekNumber: number;
+  let roadmapId: string | undefined;
+  let completedWeek: number;
   try {
     const body = await request.json();
-    weekNumber = body.week_number;
-    if (typeof weekNumber !== "number" || weekNumber < 1) {
+    roadmapId = body.roadmap_id;
+    completedWeek = body.completed_week ?? body.week_number;
+    if (typeof completedWeek !== "number" || completedWeek < 1) {
       return NextResponse.json(
-        { error: "week_number must be a positive integer" },
-        { status: 400 }
+        { error: "completed_week must be a positive integer" },
+        { status: 400 },
       );
     }
   } catch {
@@ -34,19 +36,18 @@ export async function POST(request: Request) {
   }
 
   /* ---- fetch current roadmap ---- */
-  const { data: roadmap, error: rmErr } = await supabase
-    .from("roadmaps")
-    .select("*")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
+  let query = supabase.from("roadmaps").select("*").eq("user_id", user.id);
+
+  if (roadmapId) {
+    query = query.eq("id", roadmapId);
+  } else {
+    query = query.order("created_at", { ascending: false }).limit(1);
+  }
+
+  const { data: roadmap, error: rmErr } = await query.single();
 
   if (rmErr || !roadmap) {
-    return NextResponse.json(
-      { error: "No roadmap found" },
-      { status: 404 }
-    );
+    return NextResponse.json({ error: "No roadmap found" }, { status: 404 });
   }
 
   const plan = roadmap.plan_json as RoadmapPlan;
@@ -57,19 +58,56 @@ export async function POST(request: Request) {
     .select("task_id, completed, difficulty_rating, notes")
     .eq("user_id", user.id)
     .eq("roadmap_id", roadmap.id)
-    .eq("week_number", weekNumber);
+    .eq("week_number", completedWeek);
 
   const totalTasks = progress?.length ?? 0;
   const completedTasks = progress?.filter((p) => p.completed).length ?? 0;
+
   const avgDifficulty =
-    progress && progress.length > 0
+    totalTasks > 0
       ? (
-          progress.reduce(
-            (sum, p) => sum + (p.difficulty_rating ?? 3),
-            0
-          ) / progress.length
+          progress!.reduce((sum, p) => sum + (p.difficulty_rating ?? 2), 0) /
+          totalTasks
         ).toFixed(1)
       : "N/A";
+
+  const tooHardTasks = (progress ?? []).filter(
+    (p) => (p.difficulty_rating ?? 2) === 3,
+  );
+  const tooEasyTasks = (progress ?? []).filter(
+    (p) => (p.difficulty_rating ?? 2) === 1,
+  );
+
+  // Determine which task types were skipped (present in plan but not completed)
+  const completedWeekPlan = plan.weeks.find(
+    (w) => w.week_number === completedWeek,
+  );
+  const completedIds = new Set(
+    (progress ?? []).filter((p) => p.completed).map((p) => p.task_id),
+  );
+  const skippedTypes = [
+    ...new Set(
+      (completedWeekPlan?.daily_tasks ?? [])
+        .filter((t) => !completedIds.has(t.id))
+        .map((t) => t.type),
+    ),
+  ];
+
+  /* ---- fetch journal entries for context (if the table exists) ---- */
+  let journalNotes = "";
+  try {
+    const { data: journals } = await supabase
+      .from("journal_entries")
+      .select("content")
+      .eq("user_id", user.id)
+      .eq("week_number", completedWeek);
+
+    if (journals && journals.length > 0) {
+      journalNotes = journals.map((j) => j.content).join("; ");
+    }
+  } catch {
+    // journal_entries table may not exist yet — that's fine
+  }
 
   /* ---- fetch survey for context ---- */
   const { data: survey } = await supabase
@@ -82,48 +120,85 @@ export async function POST(request: Request) {
 
   /* ---- build prompt ---- */
   const completedWeeks = plan.weeks.filter(
-    (w) => w.week_number <= weekNumber
+    (w) => w.week_number <= completedWeek,
   );
-  const futureWeeks = plan.weeks.filter((w) => w.week_number > weekNumber);
+  const remainingWeeks = plan.weeks.filter(
+    (w) => w.week_number > completedWeek,
+  );
 
   const prompt = buildAdaptPrompt({
     plan,
-    weekNumber,
+    completedWeek,
     completedTasks,
     totalTasks,
     avgDifficulty,
-    progressDetails: progress ?? [],
-    completedWeeks,
-    futureWeeks,
+    tooHardTasks,
+    tooEasyTasks,
+    skippedTypes,
+    journalNotes,
+    remainingWeeks,
     survey,
   });
 
-  /* ---- call Gemini ---- */
+  /* ---- call Gemini (with one retry on parse failure) ---- */
   try {
     const gemini = getGemini();
-    const model = gemini.getGenerativeModel({ model: GEMINI_MODEL });
+    const model = gemini.getGenerativeModel({
+      model: GEMINI_MODEL,
+      generationConfig: GENERATION_CONFIG,
+    });
+
+    let parsed: Record<string, unknown> | null = null;
+
     const result = await model.generateContent(prompt);
     const raw = result.response.text();
-    const json = extractJson(raw);
-    const parsed = JSON.parse(json);
 
-    if (!validatePlan(parsed)) {
+    try {
+      const json = extractJson(raw);
+      parsed = JSON.parse(json);
+    } catch (parseErr) {
+      console.warn("[roadmap/adapt] First parse failed, retrying…", parseErr);
+    }
+
+    if (!parsed) {
+      const retry = await model.generateContent(
+        "Your previous response was not valid JSON. Please respond with ONLY the JSON object, no other text.",
+      );
+      const retryRaw = retry.response.text();
+
+      try {
+        const retryJson = extractJson(retryRaw);
+        parsed = JSON.parse(retryJson);
+      } catch (retryErr) {
+        console.error("[roadmap/adapt] Retry parse also failed", retryErr);
+        return NextResponse.json(
+          { error: "Failed to adapt the roadmap. Please try again." },
+          { status: 500 },
+        );
+      }
+    }
+
+    const { valid, warnings } = validatePlanLenient(parsed);
+    if (warnings.length > 0) {
+      console.warn("[roadmap/adapt] Validation warnings:", warnings);
+    }
+    if (!valid) {
       return NextResponse.json(
-        { error: "Gemini returned an invalid plan shape" },
-        { status: 502 }
+        { error: "Gemini returned an unusable plan shape" },
+        { status: 502 },
       );
     }
 
-    // Merge: keep completed weeks as-is, replace future weeks
-    const mergedWeeks = [
-      ...completedWeeks,
-      ...parsed.weeks.filter(
-        (w: { week_number: number }) => w.week_number > weekNumber
-      ),
-    ];
+    // Merge: keep completed weeks as-is, replace future weeks with adapted ones
+    const adaptedPlan = parsed as unknown as RoadmapPlan;
+    const newFutureWeeks = adaptedPlan.weeks.filter(
+      (w) => w.week_number > completedWeek,
+    );
+
+    const mergedWeeks = [...completedWeeks, ...newFutureWeeks];
 
     const updatedPlan: RoadmapPlan = {
-      total_weeks: parsed.total_weeks,
+      total_weeks: plan.total_weeks,
       weeks: mergedWeeks,
     };
 
@@ -131,7 +206,7 @@ export async function POST(request: Request) {
     const { error: updateErr } = await supabase
       .from("roadmaps")
       .update({
-        current_week: weekNumber + 1,
+        current_week: completedWeek + 1,
         total_weeks: updatedPlan.total_weeks,
         plan_json: updatedPlan,
         updated_at: new Date().toISOString(),
@@ -139,15 +214,20 @@ export async function POST(request: Request) {
       .eq("id", roadmap.id);
 
     if (updateErr) {
-      return NextResponse.json(
-        { error: updateErr.message },
-        { status: 500 }
-      );
+      console.error("[roadmap/adapt] DB update failed:", updateErr);
+      return NextResponse.json({ error: updateErr.message }, { status: 500 });
     }
 
-    return NextResponse.json({ roadmap: { ...roadmap, plan_json: updatedPlan, current_week: weekNumber + 1 } });
+    return NextResponse.json({
+      roadmap: {
+        ...roadmap,
+        plan_json: updatedPlan,
+        current_week: completedWeek + 1,
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Gemini call failed";
+    console.error("[roadmap/adapt] Unexpected error:", message);
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }
@@ -158,85 +238,83 @@ export async function POST(request: Request) {
 
 interface AdaptInput {
   plan: RoadmapPlan;
-  weekNumber: number;
+  completedWeek: number;
   completedTasks: number;
   totalTasks: number;
   avgDifficulty: string;
-  progressDetails: Array<{
-    task_id: string;
-    completed: boolean;
-    difficulty_rating: number | null;
-    notes: string | null;
-  }>;
-  completedWeeks: RoadmapPlan["weeks"];
-  futureWeeks: RoadmapPlan["weeks"];
+  tooHardTasks: Array<{ task_id: string }>;
+  tooEasyTasks: Array<{ task_id: string }>;
+  skippedTypes: string[];
+  journalNotes: string;
+  remainingWeeks: RoadmapPlan["weeks"];
   survey: Record<string, unknown> | null;
 }
 
 function buildAdaptPrompt(input: AdaptInput): string {
   const {
     plan,
-    weekNumber,
+    completedWeek,
     completedTasks,
     totalTasks,
     avgDifficulty,
-    progressDetails,
-    futureWeeks,
+    tooHardTasks,
+    tooEasyTasks,
+    skippedTypes,
+    journalNotes,
+    remainingWeeks,
     survey,
   } = input;
 
-  const skippedTasks = progressDetails
-    .filter((p) => !p.completed)
-    .map((p) => p.task_id);
-
-  const hardTasks = progressDetails
-    .filter((p) => (p.difficulty_rating ?? 3) >= 4)
-    .map((p) => p.task_id);
-
-  return `You are HarmoniQ, an expert guitar coach AI. The student just finished week ${weekNumber} of their ${plan.total_weeks}-week roadmap. Adapt the REMAINING weeks based on how they did.
-
-COMPLETION DATA FOR WEEK ${weekNumber}:
-- Tasks completed: ${completedTasks} / ${totalTasks}
-- Average difficulty rating (1-5): ${avgDifficulty}
-- Tasks the student skipped: ${skippedTasks.length > 0 ? skippedTasks.join(", ") : "none"}
-- Tasks rated hard (4-5): ${hardTasks.length > 0 ? hardTasks.join(", ") : "none"}
-
-${survey ? `STUDENT PROFILE:
+  const surveyBlock = survey
+    ? `
+STUDENT PROFILE:
 - Level: ${survey.level}
 - Genres: ${(survey.genres as string[]).join(", ")}
 - Goals: ${(survey.goals as string[]).join(", ")}
 - Weekly minutes: ${survey.weekly_minutes}
 - Practice days: ${(survey.practice_days as string[]).join(", ")}
-- Weak spots: ${(survey.weak_spots as string[]).join(", ")}` : ""}
+- Weak spots: ${(survey.weak_spots as string[]).join(", ")}`
+    : "";
 
-CURRENT REMAINING PLAN (weeks ${weekNumber + 1}–${plan.total_weeks}):
-${JSON.stringify(futureWeeks, null, 2)}
+  return `You previously created a guitar practice roadmap. The student just finished week ${completedWeek}. Here's how it went:
 
-ADAPTATION RULES:
-1. If the student completed most tasks and found them easy (avg difficulty < 3), increase complexity in the next weeks.
-2. If they skipped many tasks or found them hard (avg difficulty > 3.5), slow down — add more review, reduce new material.
-3. If specific tasks were skipped, reintroduce that material in the next week.
+ORIGINAL PLAN (remaining weeks): ${JSON.stringify(remainingWeeks)}
+
+WEEK ${completedWeek} RESULTS:
+- Tasks completed: ${completedTasks}/${totalTasks}
+- Average difficulty rating: ${avgDifficulty} (1=too easy, 2=just right, 3=too hard)
+- Tasks rated "too hard": ${tooHardTasks.length > 0 ? tooHardTasks.map((t) => t.task_id).join(", ") : "none"}
+- Tasks rated "too easy": ${tooEasyTasks.length > 0 ? tooEasyTasks.map((t) => t.task_id).join(", ") : "none"}
+- Skipped task types: ${skippedTypes.length > 0 ? skippedTypes.join(", ") : "none"}
+- Student's journal notes: ${journalNotes || "None"}
+${surveyBlock}
+
+Based on this feedback, revise the REMAINING weeks (${completedWeek + 1} through ${plan.total_weeks}). Rules:
+1. If things were too hard, slow down: add more foundational work, simpler songs, more practice time on basics.
+2. If things were too easy, accelerate: introduce harder techniques, more complex songs, less warmup.
+3. If they skipped a task type (e.g. always skipped theory), reduce but don't eliminate it — try making it more engaging.
 4. Keep the total week count at ${plan.total_weeks} (don't add or remove weeks).
-5. Only output weeks ${weekNumber + 1} through ${plan.total_weeks} — completed weeks are kept as-is.
+5. Only output weeks ${completedWeek + 1} through ${plan.total_weeks} — completed weeks are kept as-is.
 6. Distribute tasks across the student's practice days, fitting within their weekly minutes.
 7. Keep using the same id format: "w{week}-d{day_index}-t{task_index}".
+8. Include REAL songs that exist on guitar tab sites.
 
-Return ONLY valid JSON matching this exact schema — no markdown fences, no commentary:
+Respond with ONLY valid JSON — no markdown fences, no commentary:
 {
   "total_weeks": ${plan.total_weeks},
   "weeks": [
     {
-      "week_number": ${weekNumber + 1},
+      "week_number": ${completedWeek + 1},
       "theme": "short title",
       "summary": "1-2 sentence explanation",
       "focus_techniques": ["technique1"],
       "songs": [{ "title": "Song Name", "artist": "Artist Name", "why": "reason" }],
       "daily_tasks": [
         {
-          "id": "w${weekNumber + 1}-d1-t1",
+          "id": "w${completedWeek + 1}-d1-t1",
           "day": "Mon",
           "minutes": 20,
-          "type": "warmup",
+          "type": "warmup|technique|song|theory|ear_training",
           "title": "Short title",
           "description": "Clear instruction"
         }

@@ -12,7 +12,7 @@ export interface DailyTask {
   id: string;
   day: string;
   minutes: number;
-  type: "warmup" | "technique" | "song" | "theory" | "ear";
+  type: "warmup" | "technique" | "song" | "theory" | "ear_training";
   title: string;
   description: string;
 }
@@ -38,19 +38,16 @@ export interface RoadmapPlan {
 export function extractJson(raw: string): string {
   let cleaned = raw.trim();
 
-  // Strip ```json ... ``` or ``` ... ```
   const fenceMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
   if (fenceMatch) {
     cleaned = fenceMatch[1].trim();
   }
 
-  // If it doesn't start with { or [, try to find the first {
   if (!cleaned.startsWith("{") && !cleaned.startsWith("[")) {
     const idx = cleaned.indexOf("{");
     if (idx !== -1) cleaned = cleaned.slice(idx);
   }
 
-  // Trim any trailing text after the closing brace
   let depth = 0;
   let end = -1;
   for (let i = 0; i < cleaned.length; i++) {
@@ -69,7 +66,7 @@ export function extractJson(raw: string): string {
 }
 
 /**
- * Minimal runtime validation — ensures the shape is what we expect.
+ * Strict validation — shape must be correct for the plan to be usable.
  */
 export function validatePlan(data: unknown): data is RoadmapPlan {
   if (!data || typeof data !== "object") return false;
@@ -81,4 +78,47 @@ export function validatePlan(data: unknown): data is RoadmapPlan {
   if (typeof first.theme !== "string") return false;
   if (!Array.isArray(first.daily_tasks)) return false;
   return true;
+}
+
+/**
+ * Lenient deep validation — logs issues but returns true for partial plans
+ * so the user gets *something* rather than a hard failure.
+ */
+export function validatePlanLenient(data: unknown): {
+  valid: boolean;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+
+  if (!data || typeof data !== "object") {
+    return { valid: false, warnings: ["Response is not an object"] };
+  }
+
+  const obj = data as Record<string, unknown>;
+
+  if (typeof obj.total_weeks !== "number") {
+    warnings.push("Missing total_weeks");
+  }
+
+  if (!Array.isArray(obj.weeks) || obj.weeks.length === 0) {
+    return { valid: false, warnings: [...warnings, "No weeks array"] };
+  }
+
+  for (const week of obj.weeks as Record<string, unknown>[]) {
+    if (typeof week.week_number !== "number") {
+      warnings.push(`Week missing week_number`);
+    }
+    if (!Array.isArray(week.daily_tasks)) {
+      warnings.push(`Week ${week.week_number ?? "?"} missing daily_tasks`);
+      continue;
+    }
+    for (const task of week.daily_tasks as Record<string, unknown>[]) {
+      if (!task.id) warnings.push(`Task missing id in week ${week.week_number}`);
+      if (!task.day) warnings.push(`Task ${task.id} missing day`);
+      if (!task.type) warnings.push(`Task ${task.id} missing type`);
+      if (!task.title) warnings.push(`Task ${task.id} missing title`);
+    }
+  }
+
+  return { valid: true, warnings };
 }

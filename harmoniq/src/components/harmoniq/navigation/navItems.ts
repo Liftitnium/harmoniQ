@@ -17,5 +17,5 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Home", Icon: Home },
   { href: "/roadmap", label: "Roadmap", Icon: Map },
   { href: "/progress", label: "Progress", Icon: BarChart3 },
-  { href: "/sheet-music", label: "Extras", Icon: Music2 },
+  { href: "/sheet-music", label: "Tabs", Icon: Music2 },
 ];

@@ -214,14 +214,15 @@ export default function OnboardingPage() {
         return;
       }
 
-      try {
-        await fetch("/api/roadmap/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      } catch {
-        /* endpoint will be built next — safe to ignore for now */
+      const res = await fetch("/api/roadmap/generate", {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error || `Roadmap generation failed (${res.status})`);
+        setSubmitting(false);
+        return;
       }
 
       await supabase

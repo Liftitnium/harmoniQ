@@ -12,3 +12,8 @@ export function getGemini() {
 }
 
 export const GEMINI_MODEL = "gemini-2.0-flash";
+
+export const GENERATION_CONFIG = {
+  temperature: 0.7,
+  maxOutputTokens: 8192,
+} as const;
