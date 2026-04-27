@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getGemini, GEMINI_MODEL, GENERATION_CONFIG } from "@/lib/gemini/client";
 import { extractJson, validatePlanLenient } from "@/lib/roadmap-schema";
+import { validateServerEnv } from "@/lib/env";
+
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
+  validateServerEnv();
+
   /* ---- auth ---- */
   const supabase = createClient();
   const {
@@ -58,9 +63,13 @@ export async function POST(request: Request) {
     let parsed: Record<string, unknown> | null = null;
 
     // First attempt
-    const result = await model.generateContent(prompt);
+    const result = await Promise.race([
+      model.generateContent(prompt),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Gemini timeout")), 25000),
+      ),
+    ]);
     const raw = result.response.text();
-    console.log("[roadmap/generate] Raw response length:", raw.length, "| First 200 chars:", raw.slice(0, 200));
 
     try {
       const json = extractJson(raw);
@@ -71,11 +80,15 @@ export async function POST(request: Request) {
 
     // Retry with explicit JSON-only instruction
     if (!parsed) {
-      const retry = await model.generateContent(
-        "Your previous response was not valid JSON. Please respond with ONLY the JSON object, no other text.",
-      );
+      const retry = await Promise.race([
+        model.generateContent(
+          "Your previous response was not valid JSON. Please respond with ONLY the JSON object, no other text.",
+        ),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Gemini timeout")), 25000),
+        ),
+      ]);
       const retryRaw = retry.response.text();
-      console.log("[roadmap/generate] Retry response length:", retryRaw.length, "| First 200 chars:", retryRaw.slice(0, 200));
 
       try {
         const retryJson = extractJson(retryRaw);
@@ -131,9 +144,18 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ roadmap });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Gemini call failed";
+    const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[roadmap/generate] Unexpected error:", message);
-    return NextResponse.json({ error: message }, { status: 502 });
+    if (message === "Gemini timeout") {
+      return NextResponse.json(
+        { error: "The AI took too long to respond. Please try again." },
+        { status: 504 },
+      );
+    }
+    return NextResponse.json(
+      { error: "Failed to generate roadmap. Please try again." },
+      { status: 502 },
+    );
   }
 }
 

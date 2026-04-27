@@ -6,8 +6,13 @@ import {
   validatePlanLenient,
   type RoadmapPlan,
 } from "@/lib/roadmap-schema";
+import { validateServerEnv } from "@/lib/env";
+
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
+  validateServerEnv();
+
   /* ---- auth ---- */
   const supabase = createClient();
   const {
@@ -150,7 +155,12 @@ export async function POST(request: Request) {
 
     let parsed: Record<string, unknown> | null = null;
 
-    const result = await model.generateContent(prompt);
+    const result = await Promise.race([
+      model.generateContent(prompt),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Gemini timeout")), 25000),
+      ),
+    ]);
     const raw = result.response.text();
 
     try {
@@ -161,9 +171,14 @@ export async function POST(request: Request) {
     }
 
     if (!parsed) {
-      const retry = await model.generateContent(
-        "Your previous response was not valid JSON. Please respond with ONLY the JSON object, no other text.",
-      );
+      const retry = await Promise.race([
+        model.generateContent(
+          "Your previous response was not valid JSON. Please respond with ONLY the JSON object, no other text.",
+        ),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Gemini timeout")), 25000),
+        ),
+      ]);
       const retryRaw = retry.response.text();
 
       try {
@@ -226,9 +241,15 @@ export async function POST(request: Request) {
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Gemini call failed";
+    const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[roadmap/adapt] Unexpected error:", message);
-    return NextResponse.json({ error: message }, { status: 502 });
+    return NextResponse.json({
+      roadmap,
+      adaptation_failed: true,
+      error: message === "Gemini timeout"
+        ? "The AI took too long to respond. Your existing plan is unchanged."
+        : "Adaptation failed. Your existing plan is unchanged.",
+    });
   }
 }
 

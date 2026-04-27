@@ -1,11 +1,12 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { validateServerEnv } from "@/lib/env";
 
 let _instance: GoogleGenerativeAI | null = null;
 
 export function getGemini() {
   if (!_instance) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) throw new Error("GEMINI_API_KEY is not set");
+    validateServerEnv();
+    const key = process.env.GEMINI_API_KEY!;
     _instance = new GoogleGenerativeAI(key);
   }
   return _instance;

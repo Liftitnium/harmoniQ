@@ -3,7 +3,6 @@
 import React, { useMemo, useState } from "react";
 import { CheckCircle2, ChevronDown, Circle, Sparkles } from "lucide-react";
 import { PRACTICE_PLAN_WEEKS, type PracticeWeek } from "@/lib/data";
-import { STUDENT } from "@/lib/data";
 
 function cx(...classes: Array<string | undefined | false>) {
   return classes.filter(Boolean).join(" ");
@@ -53,19 +52,19 @@ export default function PracticePlanPage() {
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
+          <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl">
             Practice Plan
           </h1>
-          <p className="mt-2 text-sm font-semibold text-slate-600">
-            {STUDENT.currentInstrument} • {STUDENT.currentLevel} • 4-week roadmap
+          <p className="mt-2 text-sm font-semibold text-slate-600 dark:text-slate-400">
+            Guitar • 4-week roadmap
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
             Session progress
           </p>
-          <p className="mt-1 text-sm font-extrabold text-slate-900">
+          <p className="mt-1 text-sm font-extrabold text-slate-900 dark:text-slate-100">
             {completedCount}/{allTaskIds.length} tasks checked
           </p>
         </div>
@@ -77,14 +76,14 @@ export default function PracticePlanPage() {
           return (
             <div
               key={week.id}
-              className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden"
+              className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:border-slate-800 dark:bg-slate-900"
             >
               <button
                 type="button"
                 onClick={() => setOpenWeekId(isOpen ? "" : week.id)}
                 className={cx(
                   "flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition",
-                  "hover:bg-slate-50"
+                  "hover:bg-slate-50 dark:hover:bg-slate-800"
                 )}
                 aria-expanded={isOpen}
               >

@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/harmoniq/Modal";
 import { useToast } from "@/components/harmoniq/toast/ToastProvider";
 import { useTheme } from "@/context/ThemeContext";
 import { createClient } from "@/lib/supabase/client";
-import { SETTINGS_DEFAULTS } from "@/lib/data";
 import { RefreshCw } from "lucide-react";
 
 const SECTIONS = [
@@ -25,12 +24,12 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const router = useRouter();
   const [active, setActive] = useState<SectionId>("account");
-  const [name, setName] = useState<string>(SETTINGS_DEFAULTS.name);
-  const [email, setEmail] = useState<string>(SETTINGS_DEFAULTS.email);
-  const [bio, setBio] = useState<string>(SETTINGS_DEFAULTS.bio);
-  const [instrument, setInstrument] = useState<string>(SETTINGS_DEFAULTS.primaryInstrument);
-  const [level, setLevel] = useState<string>(SETTINGS_DEFAULTS.skillLevel);
-  const [goal, setGoal] = useState(String(SETTINGS_DEFAULTS.practiceGoalMinutes));
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [bio, setBio] = useState("");
+  const [instrument, setInstrument] = useState("Guitar");
+  const [level, setLevel] = useState("Intermediate");
+  const [goal, setGoal] = useState("30");
 
   const [emailRem, setEmailRem] = useState(true);
   const [push, setPush] = useState(false);
@@ -40,6 +39,29 @@ export default function SettingsPage() {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [retaking, setRetaking] = useState(false);
+
+  useEffect(() => {
+    async function loadUser() {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      setEmail(user.email ?? "");
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("id", user.id)
+        .single();
+
+      if (profile?.display_name) {
+        setName(profile.display_name);
+      } else {
+        setName(user.email?.split("@")[0] ?? "");
+      }
+    }
+    loadUser();
+  }, []);
 
   const handleRetakeSurvey = async () => {
     setRetaking(true);

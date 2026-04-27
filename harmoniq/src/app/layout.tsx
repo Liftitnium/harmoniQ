@@ -4,8 +4,17 @@ import { HarmoniQShell } from "./HarmoniQShell";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "HarmoniQ",
-  description: "A clean, Duolingo-inspired music learning prototype.",
+  title: "HarmoniQ — Your AI Guitar Coach",
+  description:
+    "Personalized guitar practice plans powered by AI. Practice smarter with adaptive roadmaps, real tabs, and progress tracking.",
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+  ),
+  openGraph: {
+    title: "HarmoniQ — Your AI Guitar Coach",
+    description: "Personalized guitar practice plans powered by AI.",
+    type: "website",
+  },
 };
 
 export default function RootLayout({

@@ -1,11 +1,18 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  reactStrictMode: true,
   eslint: {
-    // The scaffold used ESLint v9-era config; during rapid prototyping we only
-    // care about runtime/TS correctness for the UI.
     ignoreDuringBuilds: true,
+  },
+  images: {
+    remotePatterns: [],
+  },
+  compiler: {
+    removeConsole:
+      process.env.NODE_ENV === "production"
+        ? { exclude: ["error", "warn"] }
+        : false,
   },
 };
 
 export default nextConfig;
-

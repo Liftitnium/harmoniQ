@@ -14,6 +14,7 @@ export function TopBar() {
   const { addToast } = useToast();
   const { unreadCount } = useNotificationsBadge();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [userInitial, setUserInitial] = useState("?");
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -24,6 +25,24 @@ export function TopBar() {
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  useEffect(() => {
+    async function loadInitial() {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("id", user.id)
+        .single();
+
+      const displayName = profile?.display_name || user.email || "";
+      setUserInitial(displayName.charAt(0).toUpperCase() || "?");
+    }
+    loadInitial();
   }, []);
 
   async function handleSignOut() {
@@ -66,7 +85,7 @@ export function TopBar() {
               aria-haspopup="menu"
             >
               <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-teal-600 text-sm font-extrabold text-white">
-                R
+                {userInitial}
               </span>
               <ChevronDown
                 className={`h-4 w-4 text-slate-500 transition dark:text-slate-400 ${menuOpen ? "rotate-180" : ""}`}

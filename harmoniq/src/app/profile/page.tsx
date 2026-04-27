@@ -16,7 +16,6 @@ import {
   Zap,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { USER_PROFILE } from "@/lib/data";
 import { xpProgress, BADGES } from "@/lib/xp";
 
 interface FavoriteSong {
@@ -43,11 +42,27 @@ export default function ProfilePage() {
   const [weeksCompleted, setWeeksCompleted] = useState(0);
   const [practiceMinutes, setPracticeMinutes] = useState(0);
   const [unlockedBadgeIds, setUnlockedBadgeIds] = useState<Set<string>>(new Set());
+  const [displayName, setDisplayName] = useState("Guitarist");
+  const [memberSince, setMemberSince] = useState("");
 
   const fetchData = useCallback(async () => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setLoading(false); return; }
+
+    // Get display name from profile
+    const { data: profileInfo } = await supabase
+      .from("profiles")
+      .select("display_name, created_at")
+      .eq("id", user.id)
+      .single();
+
+    if (profileInfo) {
+      setDisplayName(profileInfo.display_name || user.email?.split("@")[0] || "Guitarist");
+      if (profileInfo.created_at) {
+        setMemberSince(new Date(profileInfo.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" }));
+      }
+    }
 
     const { data: prof } = await supabase
       .from("profiles")
@@ -122,13 +137,13 @@ export default function ProfilePage() {
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
           <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-3xl bg-teal-600 text-3xl font-black text-white">
-            {USER_PROFILE.initials}
+            {displayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-xl font-black text-slate-900 dark:text-slate-100">{USER_PROFILE.displayName}</p>
-            <p className="mt-1 text-sm font-semibold text-slate-600 dark:text-slate-400">Member since {USER_PROFILE.memberSince}</p>
+            <p className="text-xl font-black text-slate-900 dark:text-slate-100">{displayName}</p>
+            <p className="mt-1 text-sm font-semibold text-slate-600 dark:text-slate-400">{memberSince && <>Member since {memberSince}</>}</p>
             <div className="mt-4 flex flex-wrap gap-2">
-              <span className="rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-extrabold text-teal-900 dark:border-teal-800 dark:bg-teal-950/50 dark:text-teal-200">{USER_PROFILE.currentInstrument}</span>
+              <span className="rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-extrabold text-teal-900 dark:border-teal-800 dark:bg-teal-950/50 dark:text-teal-200">Guitar</span>
               <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-extrabold text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200">Level {prog.level}</span>
               {streakDays >= 7 && (
                 <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-extrabold text-orange-900 dark:border-orange-800 dark:bg-orange-950/50 dark:text-orange-200">

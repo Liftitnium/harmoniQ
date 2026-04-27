@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const url = `${SONGSTERR_API}?pattern=${encodeURIComponent(q)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
 
     if (!res.ok) {
       return NextResponse.json([], { status: 200 });

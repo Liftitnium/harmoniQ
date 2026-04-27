@@ -89,7 +89,7 @@ export function SongsterrPlayer({
         src={songsterrUrl}
         width="100%"
         height="600"
-        frameBorder="0"
+        style={{ border: 0 }}
         allowFullScreen
         onLoad={handleLoad}
         className="block rounded-lg border-0"

@@ -11,6 +11,7 @@ import {
 import type { RoadmapPlan } from "@/lib/roadmap-schema";
 
 export async function POST(request: Request) {
+  try {
   const supabase = createClient();
   const {
     data: { user },
@@ -239,4 +240,11 @@ export async function POST(request: Request) {
     week_completed: weekFullyCompleted,
     progress: progressRow,
   });
+  } catch (err) {
+    console.error("[progress/complete]", err);
+    return NextResponse.json(
+      { error: "Failed to save progress" },
+      { status: 500 },
+    );
+  }
 }
