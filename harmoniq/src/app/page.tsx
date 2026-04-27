@@ -15,11 +15,14 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { xpProgress } from "@/lib/xp";
+import {
+  getTodayShort,
+  normalizeDay,
+  getGreeting,
+  getNextPracticeDay,
+  fullDayName,
+} from "@/lib/date-utils";
 import type { DailyTask, RoadmapPlan, RoadmapWeek } from "@/lib/roadmap-schema";
-
-const TODAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
-  new Date().getDay()
-];
 
 const TYPE_ICON: Record<string, typeof Zap> = {
   warmup: Flame,
@@ -44,6 +47,10 @@ export default function Home() {
   const [weeklyMinutesDone, setWeeklyMinutesDone] = useState(0);
   const [weeklyMinutesTarget, setWeeklyMinutesTarget] = useState(0);
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [displayName, setDisplayName] = useState("Guitarist");
+
+  const todayShort = useMemo(() => getTodayShort(), []);
+  const greeting = useMemo(() => getGreeting(), []);
 
   const fetchData = useCallback(async () => {
     const supabase = createClient();
@@ -58,11 +65,14 @@ export default function Home() {
     // Fetch profile data
     const { data: prof } = await supabase
       .from("profiles")
-      .select("xp, streak_days, current_level, freeze_count")
+      .select("xp, streak_days, current_level, freeze_count, display_name")
       .eq("id", user.id)
       .single();
 
-    if (prof) setProfile(prof as ProfileData);
+    if (prof) {
+      setProfile(prof as ProfileData);
+      if (prof.display_name) setDisplayName(prof.display_name);
+    }
 
     const { data: rm } = await supabase
       .from("roadmaps")
@@ -105,12 +115,25 @@ export default function Home() {
   }, [fetchData]);
 
   const todayTasks: DailyTask[] = useMemo(
-    () => currentWeek?.daily_tasks.filter((t) => t.day === TODAY_SHORT) ?? [],
-    [currentWeek],
+    () =>
+      currentWeek?.daily_tasks.filter(
+        (t) => normalizeDay(t.day) === todayShort,
+      ) ?? [],
+    [currentWeek, todayShort],
   );
 
   const todayDone = todayTasks.filter((t) => completedIds.has(t.id)).length;
   const todayTotal = todayTasks.length;
+
+  const practiceDays = useMemo(
+    () => [...new Set(currentWeek?.daily_tasks.map((t) => t.day) ?? [])],
+    [currentWeek],
+  );
+  const isRestDay = currentWeek != null && todayTotal === 0;
+  const nextPracticeDay = useMemo(
+    () => (isRestDay ? getNextPracticeDay(practiceDays, todayShort) : null),
+    [isRestDay, practiceDays, todayShort],
+  );
 
   const xp = profile?.xp ?? 0;
   const streakDays = profile?.streak_days ?? 0;
@@ -142,8 +165,11 @@ export default function Home() {
       <section className="rounded-3xl border border-teal-200 bg-gradient-to-br from-teal-50 to-white p-6 shadow-sm dark:border-teal-800 dark:from-teal-950/40 dark:to-slate-900">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold uppercase tracking-widest text-teal-700 dark:text-teal-400">
-              Today&apos;s Practice
+            <p className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+              {greeting}, {displayName}
+            </p>
+            <p className="mt-1 text-xs font-bold uppercase tracking-widest text-teal-700 dark:text-teal-400">
+              Today&apos;s Practice &middot; {fullDayName(todayShort)}
             </p>
             {todayTasks.length > 0 ? (
               <>
@@ -179,6 +205,17 @@ export default function Home() {
                   })}
                 </div>
               </>
+            ) : isRestDay ? (
+              <div className="mt-2">
+                <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
+                  Rest day!
+                </h1>
+                <p className="mt-1 text-sm font-semibold text-slate-600 dark:text-slate-400">
+                  {nextPracticeDay
+                    ? `Your next session is ${fullDayName(nextPracticeDay)}.`
+                    : "Enjoy your break — you've earned it."}
+                </p>
+              </div>
             ) : currentWeek ? (
               <h1 className="mt-2 text-xl font-black tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
                 No tasks scheduled for today

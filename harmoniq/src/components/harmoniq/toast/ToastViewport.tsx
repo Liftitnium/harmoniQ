@@ -31,12 +31,19 @@ export function ToastViewport() {
                   text: "text-rose-900",
                   icon: "text-rose-700",
                 }
-              : {
-                  bar: "bg-teal-500",
-                  border: "border-teal-200",
-                  text: "text-teal-900",
-                  icon: "text-teal-700",
-                };
+              : toast.kind === "warning"
+                ? {
+                    bar: "bg-amber-500",
+                    border: "border-amber-200",
+                    text: "text-amber-900",
+                    icon: "text-amber-700",
+                  }
+                : {
+                    bar: "bg-teal-500",
+                    border: "border-teal-200",
+                    text: "text-teal-900",
+                    icon: "text-teal-700",
+                  };
 
         return (
           <div

@@ -242,13 +242,31 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("[roadmap/adapt] Unexpected error:", message);
+    console.error("[roadmap/adapt] Gemini failed, advancing week anyway:", message);
+
+    const newWeek = Math.min(completedWeek + 1, plan.total_weeks + 1);
+
+    const { error: fallbackErr } = await supabase
+      .from("roadmaps")
+      .update({
+        current_week: newWeek,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", roadmap.id);
+
+    if (fallbackErr) {
+      console.error("[roadmap/adapt] Fallback DB update failed:", fallbackErr);
+    }
+
     return NextResponse.json({
-      roadmap,
+      roadmap: {
+        ...roadmap,
+        current_week: newWeek,
+      },
       adaptation_failed: true,
       error: message === "Gemini timeout"
-        ? "The AI took too long to respond. Your existing plan is unchanged."
-        : "Adaptation failed. Your existing plan is unchanged.",
+        ? "The AI took too long to respond."
+        : "Adaptation failed.",
     });
   }
 }

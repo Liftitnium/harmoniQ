@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     task_id: string;
     difficulty_rating: number;
     practice_minutes?: number;
+    client_date?: string;
   };
 
   try {
@@ -85,7 +86,12 @@ export async function POST(request: Request) {
   const totalTasksBefore = profile?.total_tasks_completed ?? 0;
 
   /* ---- streak calculation ---- */
-  const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const clientDate = body.client_date;
+  const isValidClientDate =
+    typeof clientDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(clientDate);
+  const today = isValidClientDate
+    ? clientDate
+    : new Date().toISOString().slice(0, 10);
 
   const { newStreak, newFreezeCount, isFirstToday } = computeStreak({
     lastPracticeDate,

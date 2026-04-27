@@ -66,12 +66,16 @@ const DIFFICULTY_META: Record<DifficultyChoice, { label: string; emoji: string }
 };
 
 /* ------------------------------------------------------------------ */
-/*  Constants                                                         */
+/*  Date helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-const TODAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
-  new Date().getDay()
-];
+import {
+  getTodayShort,
+  getLocalDateStr,
+  normalizeDay,
+  isDayPast,
+  isDayFuture,
+} from "@/lib/date-utils";
 
 const TYPE_META: Record<
   DailyTask["type"],
@@ -255,6 +259,7 @@ function ConfirmModal({
   loading,
   weekNum,
   isFinalWeek,
+  incompleteTasks,
   onConfirm,
   onCancel,
 }: {
@@ -262,6 +267,7 @@ function ConfirmModal({
   loading: boolean;
   weekNum: number;
   isFinalWeek: boolean;
+  incompleteTasks: number;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -299,6 +305,11 @@ function ConfirmModal({
                 ? "Complete your roadmap?"
                 : `Ready to move to Week ${weekNum + 1}?`}
             </h2>
+            {incompleteTasks > 0 && (
+              <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                You have {incompleteTasks} incomplete task{incompleteTasks === 1 ? "" : "s"}. Complete week anyway?
+              </p>
+            )}
             <p className="mt-2 text-sm font-semibold text-slate-600 dark:text-slate-400">
               {isFinalWeek
                 ? "You've finished every week! We'll wrap up your roadmap."
@@ -377,6 +388,8 @@ export default function RoadmapPage() {
   const [levelUpModal, setLevelUpModal] = useState<number | null>(null);
   const [lastXpResult, setLastXpResult] = useState<{ xp: number; multiplier: number } | null>(null);
 
+  const todayShort = useMemo(() => getTodayShort(), []);
+
   /* ---- refs for scrolling ---- */
   const taskRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -433,7 +446,9 @@ export default function RoadmapPage() {
   /* ---- derived ---- */
   const plan = roadmap?.plan_json ?? null;
   const currentWeekNum = roadmap?.current_week ?? 1;
-  const isFinalWeek = currentWeekNum === (plan?.total_weeks ?? 0);
+  const totalWeeks = plan?.total_weeks ?? 0;
+  const isFinalWeek = currentWeekNum === totalWeeks;
+  const roadmapFinished = currentWeekNum > totalWeeks && totalWeeks > 0;
 
   const currentWeek: RoadmapWeek | null = useMemo(
     () => plan?.weeks.find((w) => w.week_number === currentWeekNum) ?? null,
@@ -475,12 +490,19 @@ export default function RoadmapPage() {
   }, [currentWeekTasks]);
 
   useEffect(() => {
-    if (tasksByDay.has(TODAY_SHORT)) {
-      setExpandedDays(new Set([TODAY_SHORT]));
-    } else if (tasksByDay.size > 0) {
-      setExpandedDays(new Set([tasksByDay.keys().next().value!]));
+    if (tasksByDay.has(todayShort)) {
+      setExpandedDays(new Set([todayShort]));
+    } else {
+      const matchByNormalized = [...tasksByDay.keys()].find(
+        (d) => normalizeDay(d) === todayShort,
+      );
+      if (matchByNormalized) {
+        setExpandedDays(new Set([matchByNormalized]));
+      } else if (tasksByDay.size > 0) {
+        setExpandedDays(new Set([tasksByDay.keys().next().value!]));
+      }
     }
-  }, [tasksByDay]);
+  }, [tasksByDay, todayShort]);
 
   const completedWeeks = useMemo(
     () => plan?.weeks.filter((w) => w.week_number < currentWeekNum) ?? [],
@@ -517,6 +539,7 @@ export default function RoadmapPage() {
           task_id: taskId,
           difficulty_rating: rating,
           practice_minutes: overrideMinutes ?? task?.minutes ?? 0,
+          client_date: getLocalDateStr(),
         }),
       });
 
@@ -562,7 +585,7 @@ export default function RoadmapPage() {
   }
 
   async function handleAdapt() {
-    if (!roadmap) return;
+    if (!roadmap || adapting) return;
     setAdapting(true);
 
     try {
@@ -575,26 +598,43 @@ export default function RoadmapPage() {
         }),
       });
 
-      if (res.ok) {
-        if (isFinalWeek) {
-          setCompleted(true);
-          setShowConfirm(false);
-        } else {
-          addToast({
-            kind: "success",
-            title: "Plan updated",
-            message: `Week ${currentWeekNum + 1} is ready. Let's go!`,
-          });
-          setShowConfirm(false);
-          await fetchData();
-        }
-      } else {
-        const data = await res.json();
+      const data = await res.json();
+
+      if (!res.ok && !data.roadmap) {
         addToast({
           kind: "error",
           title: "Adaptation failed",
           message: data.error || "Try again later.",
         });
+        setAdapting(false);
+        return;
+      }
+
+      const updatedRoadmap = data.roadmap as RoadmapRow | undefined;
+      const newCurrentWeek = updatedRoadmap?.current_week ?? currentWeekNum + 1;
+      const totalWeeks = roadmap.total_weeks;
+
+      if (data.adaptation_failed) {
+        addToast({
+          kind: "warning",
+          title: "Plan kept as-is",
+          message: "We couldn't update your plan this time, but you can keep going.",
+        });
+      }
+
+      if (newCurrentWeek > totalWeeks) {
+        setCompleted(true);
+        setShowConfirm(false);
+      } else {
+        if (!data.adaptation_failed) {
+          addToast({
+            kind: "success",
+            title: "Plan updated",
+            message: `Week ${newCurrentWeek} is ready. Let's go!`,
+          });
+        }
+        setShowConfirm(false);
+        await fetchData();
       }
     } catch {
       addToast({
@@ -664,6 +704,13 @@ export default function RoadmapPage() {
     );
   }
 
+  /* ---- celebration (completed entire roadmap) ---- */
+  if (completed || roadmapFinished) {
+    return (
+      <CelebrationBanner onNewRoadmap={() => router.push("/onboarding")} />
+    );
+  }
+
   /* ---- no roadmap → redirect handled in fetchData, but show fallback just in case ---- */
   if (!plan || !currentWeek) {
     return (
@@ -690,13 +737,6 @@ export default function RoadmapPage() {
     );
   }
 
-  /* ---- celebration (completed entire roadmap) ---- */
-  if (completed) {
-    return (
-      <CelebrationBanner onNewRoadmap={() => router.push("/onboarding")} />
-    );
-  }
-
   /* ---- render ---- */
   return (
     <div className="space-y-6">
@@ -706,6 +746,7 @@ export default function RoadmapPage() {
         loading={adapting}
         weekNum={currentWeekNum}
         isFinalWeek={isFinalWeek}
+        incompleteTasks={currentWeekTasks.length - currentWeekCompleted}
         onConfirm={handleAdapt}
         onCancel={() => setShowConfirm(false)}
       />
@@ -839,10 +880,15 @@ export default function RoadmapPage() {
               </div>
               <button
                 type="button"
+                disabled={adapting}
                 onClick={() => setShowConfirm(true)}
-                className="inline-flex h-10 shrink-0 items-center gap-2 rounded-2xl bg-teal-700 px-5 text-sm font-extrabold text-white transition hover:bg-teal-800"
+                className="inline-flex h-10 shrink-0 items-center gap-2 rounded-2xl bg-teal-700 px-5 text-sm font-extrabold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <RefreshCw className="h-4 w-4" />
+                {adapting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
                 {isFinalWeek
                   ? "Finish Roadmap"
                   : "Complete Week & Update Plan"}
@@ -857,14 +903,18 @@ export default function RoadmapPage() {
             <div className="group relative">
               <button
                 type="button"
-                disabled={!anyCurrentDone}
+                disabled={!anyCurrentDone || adapting}
                 onClick={() => setShowConfirm(true)}
                 className="inline-flex h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-xs font-extrabold text-slate-600 transition hover:border-teal-300 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:border-teal-700"
               >
-                <RefreshCw className="h-3.5 w-3.5" />
+                {adapting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
                 Complete Week
               </button>
-              {!anyCurrentDone && (
+              {!anyCurrentDone && !adapting && (
                 <span className="absolute -top-9 right-0 hidden whitespace-nowrap rounded-lg bg-slate-800 px-2.5 py-1 text-[10px] font-bold text-white shadow-lg group-hover:block dark:bg-slate-700">
                   Complete at least one task first
                 </span>
@@ -893,11 +943,15 @@ export default function RoadmapPage() {
           {/* -- current week daily tasks -- */}
           <div className="space-y-2">
             {Array.from(tasksByDay.entries()).map(([day, tasks]) => {
-              const isToday = day === TODAY_SHORT;
+              const normalizedDay = normalizeDay(day);
+              const isToday = normalizedDay === todayShort;
+              const isPast = isDayPast(normalizedDay, todayShort);
+              const isFuture = isDayFuture(normalizedDay, todayShort);
               const open = expandedDays.has(day);
               const dayDone = tasks.every((t) => completedSet.has(t.id));
               const dayCompleted = tasks.filter((t) => completedSet.has(t.id)).length;
               const dayMinutes = tasks.reduce((s, t) => s + t.minutes, 0);
+              const dayMissed = isPast && !dayDone;
 
               return (
                 <div
@@ -905,7 +959,9 @@ export default function RoadmapPage() {
                   className={`rounded-3xl border shadow-sm transition ${
                     isToday
                       ? "border-teal-200 bg-white ring-2 ring-teal-100 dark:border-teal-700 dark:bg-slate-900 dark:ring-teal-900/40"
-                      : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+                      : dayMissed
+                        ? "border-amber-200 bg-amber-50/30 dark:border-amber-800/50 dark:bg-amber-950/10"
+                        : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
                   }`}
                 >
                   <button
@@ -920,10 +976,22 @@ export default function RoadmapPage() {
                         </span>
                       ) : (
                         <span
-                          className={`flex h-7 w-7 items-center justify-center rounded-full ${isToday ? "bg-teal-100 dark:bg-teal-900/40" : "bg-slate-100 dark:bg-slate-800"}`}
+                          className={`flex h-7 w-7 items-center justify-center rounded-full ${
+                            isToday
+                              ? "bg-teal-100 dark:bg-teal-900/40"
+                              : dayMissed
+                                ? "bg-amber-100 dark:bg-amber-900/30"
+                                : "bg-slate-100 dark:bg-slate-800"
+                          }`}
                         >
                           <span
-                            className={`text-xs font-extrabold ${isToday ? "text-teal-700 dark:text-teal-400" : "text-slate-600 dark:text-slate-400"}`}
+                            className={`text-xs font-extrabold ${
+                              isToday
+                                ? "text-teal-700 dark:text-teal-400"
+                                : dayMissed
+                                  ? "text-amber-700 dark:text-amber-400"
+                                  : "text-slate-600 dark:text-slate-400"
+                            }`}
                           >
                             {day.charAt(0)}
                           </span>
@@ -935,6 +1003,16 @@ export default function RoadmapPage() {
                           {isToday && (
                             <span className="ml-2 text-xs font-bold text-teal-600 dark:text-teal-400">
                               Today
+                            </span>
+                          )}
+                          {dayMissed && (
+                            <span className="ml-2 text-xs font-bold text-amber-600 dark:text-amber-400">
+                              Missed
+                            </span>
+                          )}
+                          {isFuture && !dayDone && (
+                            <span className="ml-2 text-xs font-bold text-slate-400 dark:text-slate-500">
+                              Upcoming
                             </span>
                           )}
                         </span>
